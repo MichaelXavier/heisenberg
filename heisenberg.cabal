@@ -20,6 +20,7 @@ flag lib-Werror
 library
   hs-source-dirs:      src
   exposed-modules:     Heisenberg
+                     , Heisenberg.Internal.Types
   build-depends:       base >= 4.7 && < 5
                      , enclosed-exceptions >= 1
                      , transformers
@@ -28,7 +29,7 @@ library
                      , mwc-random
                      , monad-control
                      , lens < 5
-                     , stm
+                     , async
   default-language:    Haskell2010
 
   if flag(lib-Werror)

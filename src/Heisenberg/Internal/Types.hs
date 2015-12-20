@@ -1,12 +1,11 @@
 {-# LANGUAGE TemplateHaskell #-}
-module Heisenberg.Types where
+module Heisenberg.Internal.Types where
 
 
 -------------------------------------------------------------------------------
-import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Lens
-import           Data.Text              (Text)
+import           Data.Text         (Text)
 import           System.Random.MWC
 -------------------------------------------------------------------------------
 
@@ -18,20 +17,22 @@ newtype ExperimentName = ExperimentName {
 
 
 -------------------------------------------------------------------------------
-data Experiment = Experiment {
-      _eName  :: !ExperimentName
-    , _eRNG   :: !GenIO
-    , _eStats :: !(TVar ExperimentStats)
+data Experiment m a = Experiment {
+      _eName     :: !ExperimentName
+    , _eRNG      :: !GenIO
+    , _eReporter :: !(ExperimentReporter m a)
     }
 
 
 -------------------------------------------------------------------------------
-data ExperimentStats = ExperimentStats {
-      _esRuns           :: !Integer
-    , _esMismatches     :: !Integer
-    , _esCtrlExceptions :: !Integer
-    , _esCandExceptions :: !Integer
-    } deriving (Show, Eq)
+type ExperimentReporter m a = Outcome a -> m ()
+
+
+-------------------------------------------------------------------------------
+data Outcome a = Outcome {
+      _oControlObservation   :: !(Observation a)
+    , _oCandidateObservation :: !(Observation a)
+    } deriving (Show)
 
 
 -------------------------------------------------------------------------------
@@ -41,12 +42,20 @@ newtype NanoSeconds = NanoSeconds {
 
 
 -------------------------------------------------------------------------------
-newtype Observation a = Observation {
-      observation :: (Either SomeException (a, NanoSeconds))
-    }
+data Observation a = FailedObservation !SomeException
+                   | Observation !(SuccessfulObservation a) deriving (Show)
+
+
+-------------------------------------------------------------------------------
+data SuccessfulObservation a = SuccessfulObservation {
+      _oResult   :: !a
+    , _oDuration :: !NanoSeconds
+    } deriving (Show, Eq)
+
 
 -------------------------------------------------------------------------------
 makeLenses ''ExperimentName
 makeLenses ''Experiment
 makeLenses ''NanoSeconds
-makeLenses ''ExperimentStats
+makePrisms ''Observation
+makeLenses ''SuccessfulObservation

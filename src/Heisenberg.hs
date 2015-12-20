@@ -2,38 +2,40 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
 module Heisenberg
-    ( newExperiment
+    ( -- * Setup
+      newExperiment
     , runExperiment
-    -- ^ Types
+    -- * Reporters
+    , nullReporter
+    , sequenceReporters
+    , parallelReporters
+    -- * Types
     , ExperimentName(..)
     , experimentName
     , Experiment
     , eName
     , _eName
-    , eStats
-    , _eStats
+    , eReporter
+    , _eReporter
     ) where
 
 
 -------------------------------------------------------------------------------
-import           Control.Concurrent.STM
+import           Control.Concurrent.Async
 import           Control.Exception
 import           Control.Exception.Enclosed
-import           Control.Lens
-import           Control.Monad.IO.Class
+import           Control.Monad
 import           Control.Monad.Trans.Control
-import           Data.Either
 import           System.Clock
 import           System.Random.MWC
 -------------------------------------------------------------------------------
-import           Heisenberg.Types
+import           Heisenberg.Internal.Types
 -------------------------------------------------------------------------------
 
-newExperiment :: ExperimentName -> IO Experiment
-newExperiment n = do
-  stats <- newTVarIO (ExperimentStats 0 0 0 0)
+newExperiment :: ExperimentName -> ExperimentReporter m a -> IO (Experiment m a)
+newExperiment n reporter = do
   rng <- createSystemRandom
-  return (Experiment n rng stats)
+  return (Experiment n rng reporter)
 
 
 -------------------------------------------------------------------------------
@@ -42,7 +44,7 @@ runExperiment
     :: ( MonadBaseControl IO m
        , Eq a
        )
-    => Experiment
+    => Experiment m a
     -> m a
     -- ^ Control
     -> m a
@@ -53,51 +55,33 @@ runExperiment Experiment {..} ctrl cand = do
   if controlFirst
      then do ctrlRes <- runAction ctrl
              candRes <- runAction cand
-             report' ctrlRes candRes
+             _ <- tryAny (_eReporter (Outcome ctrlRes candRes))
              result ctrlRes
      else do candRes <- runAction cand
              ctrlRes <- runAction ctrl
-             report' ctrlRes candRes
+             _ <- tryAny (_eReporter (Outcome ctrlRes candRes))
              result ctrlRes
-  where result = either (liftIO' . throw) (return . fst) . observation
-        report' ctrl cand = liftIO' (atomically (report _eStats ctrl cand))
+  where result (FailedObservation e)                                 = liftIO' (throw e)
+        result (Observation (SuccessfulObservation { _oResult = r})) = return r
 
 
 -------------------------------------------------------------------------------
---TODO: newtype over result?
-report
-    :: (Eq a)
-    => TVar ExperimentStats
-    -> Observation a
-    -- ^ Control observation
-    -> Observation a
-    -- ^ Candidate observation
-    -> STM ()
-report v (Observation ctrl) (Observation cand) = modifyTVar' v go
-  where go s = s & esRuns +~ 1
-                 & esMismatches +~ mismatch
-                 & esCtrlExceptions +~ ctrlException
-                 & esCandExceptions +~ candException
-        mismatch = case (ctrl, cand) of
-                     (Right a, Right b)
-                       | a == b -> 0
-                     _ -> 1
-        ctrlException = if isLeft ctrl then 1 else 0
-        candException = if isLeft cand then 1 else 0
-
-
--------------------------------------------------------------------------------
+--TODO: non-exceptional error case like retry?
 runAction
     :: ( MonadBaseControl IO m
        )
     => m a
     -> m (Observation a)
-runAction f = Observation <$> tryAny go
+runAction f = do
+  res <- tryAny go
+  return $ case res of
+             Left e -> FailedObservation e
+             Right so -> Observation so
   where go = do t1 <- liftIO' getTime'
                 res <- f
                 t2 <- liftIO' getTime'
                 let tDelta = NanoSeconds (timeSpecAsNanoSecs (diffTimeSpec t2 t1))
-                return (res, tDelta)
+                return (SuccessfulObservation res tDelta)
         getTime' = getTime Monotonic
 
 
@@ -105,3 +89,34 @@ runAction f = Observation <$> tryAny go
 -- | I don't actually know if this is right
 liftIO' :: MonadBaseControl IO m => IO a -> m a
 liftIO' f = liftBaseWith (const f)
+
+
+-------------------------------------------------------------------------------
+nullReporter :: Monad m => ExperimentReporter m a
+nullReporter = const (return ())
+
+
+-------------------------------------------------------------------------------
+-- | Combine 2 experiment reporters to run in sequence. Eats synchronous exceptions for each reporter
+sequenceReporters
+    :: (MonadBaseControl IO m)
+    => ExperimentReporter m a
+    -> ExperimentReporter m a
+    -> ExperimentReporter m a
+sequenceReporters a b o = eatExceptions (a o) >> eatExceptions (b o)
+
+
+-------------------------------------------------------------------------------
+parallelReporters
+  :: (MonadBaseControl IO m)
+  => ExperimentReporter m a
+  -> ExperimentReporter m a
+  -> ExperimentReporter m a
+parallelReporters a b o = restoreM =<< liftBaseWith (\runInIO ->
+    let doConc = Concurrently . runInIO . eatExceptions
+    in runConcurrently (doConc (a o) *> doConc (b o)))
+
+
+-------------------------------------------------------------------------------
+eatExceptions :: (MonadBaseControl IO m) => m () -> m ()
+eatExceptions = void . tryAny
