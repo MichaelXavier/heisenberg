@@ -17,10 +17,26 @@ module Heisenberg
     , _eName
     , eReporter
     , _eReporter
+    , Outcome
+    , _oControlObservation
+    , _oCandidateObservation
+    , oControlObservation
+    , oCandidateObservation
+    , Observation(..)
+    , _FailedObservation
+    , _Observation
+    , SuccessfulObservation
+    , _oResult
+    , _oDuration
+    , oResult
+    , oDuration
+    , NanoSeconds(..)
+    , nanoSeconds
     ) where
 
 
 -------------------------------------------------------------------------------
+import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Exception
 import           Control.Exception.Enclosed
@@ -32,6 +48,7 @@ import           System.Random.MWC
 import           Heisenberg.Internal.Types
 -------------------------------------------------------------------------------
 
+
 newExperiment :: ExperimentName -> ExperimentReporter m a -> IO (Experiment m a)
 newExperiment n reporter = do
   rng <- createSystemRandom
@@ -39,7 +56,7 @@ newExperiment n reporter = do
 
 
 -------------------------------------------------------------------------------
--- list of named candidates?
+-- TODO: list of named candidates?
 runExperiment
     :: ( MonadBaseControl IO m
        , Eq a
@@ -55,18 +72,19 @@ runExperiment Experiment {..} ctrl cand = do
   if controlFirst
      then do ctrlRes <- runAction ctrl
              candRes <- runAction cand
-             _ <- tryAny (_eReporter (Outcome ctrlRes candRes))
+             _ <- report ctrlRes candRes
              result ctrlRes
      else do candRes <- runAction cand
              ctrlRes <- runAction ctrl
-             _ <- tryAny (_eReporter (Outcome ctrlRes candRes))
+             _ <- report ctrlRes candRes
              result ctrlRes
   where result (FailedObservation e)                                 = liftIO' (throw e)
         result (Observation (SuccessfulObservation { _oResult = r})) = return r
+        report ctrlRes candRes = liftBaseWith $ \runInIO ->
+          forkIO (void (runInIO (_eReporter (Outcome ctrlRes candRes))))
 
 
 -------------------------------------------------------------------------------
---TODO: non-exceptional error case like retry?
 runAction
     :: ( MonadBaseControl IO m
        )

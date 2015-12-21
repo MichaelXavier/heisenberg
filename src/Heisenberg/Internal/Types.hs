@@ -36,6 +36,9 @@ data Outcome a = Outcome {
 
 
 -------------------------------------------------------------------------------
+
+
+-------------------------------------------------------------------------------
 newtype NanoSeconds = NanoSeconds {
       _nanoSeconds :: Integer
     } deriving (Show, Eq, Ord)
@@ -59,3 +62,4 @@ makeLenses ''Experiment
 makeLenses ''NanoSeconds
 makePrisms ''Observation
 makeLenses ''SuccessfulObservation
+makeLenses ''Outcome
