@@ -59,7 +59,6 @@ newExperiment n reporter = do
 -- TODO: list of named candidates?
 runExperiment
     :: ( MonadBaseControl IO m
-       , Eq a
        )
     => Experiment m a
     -> m a
