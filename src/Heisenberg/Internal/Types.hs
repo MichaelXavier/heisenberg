@@ -36,9 +36,6 @@ data Outcome a = Outcome {
 
 
 -------------------------------------------------------------------------------
-
-
--------------------------------------------------------------------------------
 newtype NanoSeconds = NanoSeconds {
       _nanoSeconds :: Integer
     } deriving (Show, Eq, Ord)
